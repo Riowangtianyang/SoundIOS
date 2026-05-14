@@ -204,12 +204,12 @@ export const personsAPI = {
 // 问AI相关 API
 export const chatAPI = {
   // 发送消息
-  send: (messages: Array<{role: string; content: string}>) =>
+  send: (messages: Array<{role: string; content: string}>, returnAudio = false) =>
     request<{
       response: string;
     }>('/chat', {
       method: 'POST',
-      body: JSON.stringify({messages}),
+      body: JSON.stringify({messages, return_audio: returnAudio}),
     }),
 
   // 获取上下文
@@ -220,6 +220,12 @@ export const chatAPI = {
       memories: Array<{id: number; content: string; category: string}>;
     }>(`/chat/context${queryString}`);
   },
+
+  // 获取可用语音列表
+  getVoices: () =>
+    request<{
+      voices: Record<string, string>;
+    }>('/chat/voices'),
 };
 
 // 导出所有 API

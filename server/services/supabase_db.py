@@ -4,6 +4,10 @@ Supabase 数据库服务封装
 """
 from supabase import create_client, Client
 import os
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 # 初始化 Supabase 客户端
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -166,4 +170,110 @@ def delete_todo(id: int):
     """删除待办事项"""
     supabase = get_supabase()
     supabase.table("todos").delete().eq("id", id).execute()
+    return True
+
+
+# ============ Recording Operations ============
+
+def create_recording(audio_path: str, duration: float = 0.0, status: str = "pending"):
+    """创建录音记录"""
+    supabase = get_supabase()
+    data = {
+        "audio_path": audio_path,
+        "duration": duration,
+        "status": status
+    }
+    result = supabase.table("recordings").insert(data).execute()
+    return result.data[0] if result.data else None
+
+
+def get_recordings(limit: int = 100):
+    """获取录音列表"""
+    supabase = get_supabase()
+    result = supabase.table("recordings").select("*").order("created_at", desc=True).limit(limit).execute()
+    return result.data or []
+
+
+def get_recording(id: int):
+    """获取单个录音"""
+    supabase = get_supabase()
+    result = supabase.table("recordings").select("*").eq("id", id).execute()
+    return result.data[0] if result.data else None
+
+
+def update_recording(id: int, data: dict):
+    """更新录音"""
+    supabase = get_supabase()
+    result = supabase.table("recordings").update(data).eq("id", id).execute()
+    return result.data[0] if result.data else None
+
+
+def delete_recording(id: int):
+    """删除录音"""
+    supabase = get_supabase()
+    supabase.table("recordings").delete().eq("id", id).execute()
+    return True
+
+
+# ============ Transcript Operations ============
+
+def create_transcript(recording_id: int, text: str, segments: list = None):
+    """创建转写记录"""
+    supabase = get_supabase()
+    data = {
+        "recording_id": recording_id,
+        "text": text,
+        "segments": segments or []
+    }
+    result = supabase.table("transcripts").insert(data).execute()
+    return result.data[0] if result.data else None
+
+
+def get_transcript(recording_id: int):
+    """获取转写记录"""
+    supabase = get_supabase()
+    result = supabase.table("transcripts").select("*").eq("recording_id", recording_id).execute()
+    return result.data[0] if result.data else None
+
+
+# ============ Diary Operations ============
+
+def create_diary(date: str, summary: str, details: str = None, mood_score: int = None):
+    """创建日记"""
+    supabase = get_supabase()
+    data = {
+        "date": date,
+        "summary": summary,
+        "details": details,
+        "mood_score": mood_score
+    }
+    result = supabase.table("diaries").insert(data).execute()
+    return result.data[0] if result.data else None
+
+
+def get_diaries(limit: int = 30):
+    """获取日记列表"""
+    supabase = get_supabase()
+    result = supabase.table("diaries").select("*").order("date", desc=True).limit(limit).execute()
+    return result.data or []
+
+
+def get_diary_by_date(date: str):
+    """按日期获取日记"""
+    supabase = get_supabase()
+    result = supabase.table("diaries").select("*").eq("date", date).execute()
+    return result.data[0] if result.data else None
+
+
+def update_diary(id: int, data: dict):
+    """更新日记"""
+    supabase = get_supabase()
+    result = supabase.table("diaries").update(data).eq("id", id).execute()
+    return result.data[0] if result.data else None
+
+
+def delete_diary(id: int):
+    """删除日记"""
+    supabase = get_supabase()
+    supabase.table("diaries").delete().eq("id", id).execute()
     return True
