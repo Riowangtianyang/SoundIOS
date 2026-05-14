@@ -1,7 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from sqlalchemy.orm import Session
-from models import get_db
-from models.database import Recording
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from services.supabase_db import (
+    create_recording,
+    get_recordings,
+    get_recording,
+    delete_recording,
+    create_transcript,
+    get_transcript,
+)
 from datetime import datetime
 import os
 import uuid
@@ -12,7 +17,7 @@ UPLOAD_DIR = "./uploads"
 
 
 @router.post("/recordings")
-async def upload_recording(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_recording(file: UploadFile = File(...)):
     """上传录音文件"""
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -27,34 +32,28 @@ async def upload_recording(file: UploadFile = File(...), db: Session = Depends(g
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"保存文件失败: {str(e)}")
 
-    recording = Recording(
-        audio_path=audio_path,
-        status="pending"
-    )
-    db.add(recording)
-    db.commit()
-    db.refresh(recording)
+    recording = create_recording(audio_path=audio_path, duration=0.0)
 
     return {
-        "id": recording.id,
-        "audio_path": recording.audio_path,
-        "status": recording.status,
-        "created_at": recording.created_at
+        "id": recording.get("id"),
+        "audio_path": recording.get("audio_path"),
+        "status": recording.get("status"),
+        "created_at": recording.get("created_at")
     }
 
 
 @router.get("/recordings")
-async def list_recordings(db: Session = Depends(get_db)):
+async def list_recordings():
     """获取录音列表"""
-    recordings = db.query(Recording).order_by(Recording.created_at.desc()).all()
+    recordings = get_recordings(limit=50)
     return {
         "recordings": [
             {
-                "id": r.id,
-                "audio_path": r.audio_path,
-                "duration": r.duration,
-                "status": r.status,
-                "created_at": r.created_at
+                "id": r.get("id"),
+                "audio_path": r.get("audio_path"),
+                "duration": r.get("duration"),
+                "status": r.get("status"),
+                "created_at": r.get("created_at")
             }
             for r in recordings
         ]
@@ -62,36 +61,37 @@ async def list_recordings(db: Session = Depends(get_db)):
 
 
 @router.get("/recordings/{recording_id}")
-async def get_recording(recording_id: int, db: Session = Depends(get_db)):
+async def get_recording_detail(recording_id: int):
     """获取录音详情"""
-    recording = db.query(Recording).filter(Recording.id == recording_id).first()
+    recording = get_recording(recording_id)
     if not recording:
         raise HTTPException(status_code=404, detail="录音不存在")
 
+    transcript = get_transcript(recording_id)
+
     return {
-        "id": recording.id,
-        "audio_path": recording.audio_path,
-        "duration": recording.duration,
-        "status": recording.status,
-        "created_at": recording.created_at,
+        "id": recording.get("id"),
+        "audio_path": recording.get("audio_path"),
+        "duration": recording.get("duration"),
+        "status": recording.get("status"),
+        "created_at": recording.get("created_at"),
         "transcript": {
-            "text": recording.transcript.text if recording.transcript else None,
-            "segments": recording.transcript.segments if recording.transcript else None
-        } if recording.transcript else None
+            "text": transcript.get("text") if transcript else None,
+            "segments": transcript.get("segments") if transcript else None
+        } if transcript else None
     }
 
 
 @router.delete("/recordings/{recording_id}")
-async def delete_recording(recording_id: int, db: Session = Depends(get_db)):
+async def delete_recording_api(recording_id: int):
     """删除录音"""
-    recording = db.query(Recording).filter(Recording.id == recording_id).first()
+    recording = get_recording(recording_id)
     if not recording:
         raise HTTPException(status_code=404, detail="录音不存在")
 
-    if os.path.exists(recording.audio_path):
-        os.remove(recording.audio_path)
+    if os.path.exists(recording.get("audio_path", "")):
+        os.remove(recording.get("audio_path"))
 
-    db.delete(recording)
-    db.commit()
+    delete_recording(recording_id)
 
     return {"message": "录音已删除"}
