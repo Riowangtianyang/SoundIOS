@@ -65,16 +65,18 @@ env/
 venv/
 *.egg-info/
 dist/
-build/
-
-# Byte-compiled / optimized
-__pycache__/
-
-# Test
 .pytest_cache/
 .coverage
 htmlcov/
 
 # Virtual environments
+venv/
+ENV/
+
+# Byte-compiled
+__pycache__/
+*.py[cod]
+
+# Virtual environment
 venv/
 ENV/
