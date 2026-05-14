@@ -1,9 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
-from models import get_db
-from models.database import Person, Memory
+
+from services.supabase_db import (
+    create_person as db_create_person,
+    get_persons as db_get_persons,
+    get_person as db_get_person,
+    update_person as db_update_person,
+    delete_person as db_delete_person,
+    create_memory as db_create_memory,
+    get_memories as db_get_memories,
+    update_memory_confirmed as db_update_memory_confirmed,
+)
 
 router = APIRouter()
 
@@ -30,17 +38,17 @@ class MemoryCreate(BaseModel):
 
 
 @router.get("/persons")
-async def list_persons(db: Session = Depends(get_db)):
+async def list_persons():
     """获取人物列表"""
-    persons = db.query(Person).all()
+    persons = db_get_persons()
     return {
         "persons": [
             {
-                "id": p.id,
-                "name": p.name,
-                "relationship_type": p.relationship_type,
-                "notes": p.notes,
-                "personality_tags": p.personality_tags
+                "id": p["id"],
+                "name": p["name"],
+                "relationship_type": p.get("relationship_type"),
+                "notes": p.get("notes"),
+                "personality_tags": p.get("personality_tags") or []
             }
             for p in persons
         ]
@@ -48,93 +56,94 @@ async def list_persons(db: Session = Depends(get_db)):
 
 
 @router.post("/persons")
-async def create_person(person: PersonCreate, db: Session = Depends(get_db)):
+async def create_person(person: PersonCreate):
     """创建人物"""
-    existing = db.query(Person).filter(Person.name == person.name).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该人物已存在")
+    # 检查是否已存在
+    existing = db_get_persons()
+    for p in existing:
+        if p["name"] == person.name:
+            raise HTTPException(status_code=400, detail="该人物已存在")
 
-    new_person = Person(
+    new_person = db_create_person(
         name=person.name,
         relationship_type=person.relationship_type,
         notes=person.notes,
         personality_tags=person.personality_tags
     )
-    db.add(new_person)
-    db.commit()
-    db.refresh(new_person)
 
     return {
-        "id": new_person.id,
-        "name": new_person.name,
-        "relationship_type": new_person.relationship_type,
-        "notes": new_person.notes,
-        "personality_tags": new_person.personality_tags
+        "id": new_person["id"],
+        "name": new_person["name"],
+        "relationship_type": new_person.get("relationship_type"),
+        "notes": new_person.get("notes"),
+        "personality_tags": new_person.get("personality_tags") or []
     }
 
 
 @router.get("/persons/{person_id}")
-async def get_person(person_id: int, db: Session = Depends(get_db)):
+async def get_person(person_id: int):
     """获取人物详情"""
-    person = db.query(Person).filter(Person.id == person_id).first()
+    person = db_get_person(person_id)
     if not person:
         raise HTTPException(status_code=404, detail="人物不存在")
 
+    # 获取该人物的内存
+    memories = db_get_memories(person_id=person_id)
+
     return {
-        "id": person.id,
-        "name": person.name,
-        "relationship_type": person.relationship_type,
-        "notes": person.notes,
-        "personality_tags": person.personality_tags,
+        "id": person["id"],
+        "name": person["name"],
+        "relationship_type": person.get("relationship_type"),
+        "notes": person.get("notes"),
+        "personality_tags": person.get("personality_tags") or [],
         "memories": [
             {
-                "id": m.id,
-                "content": m.content,
-                "category": m.category,
-                "confirmed": m.confirmed
+                "id": m["id"],
+                "content": m["content"],
+                "category": m.get("category"),
+                "confirmed": m.get("confirmed")
             }
-            for m in person.memories
+            for m in memories
         ]
     }
 
 
 @router.put("/persons/{person_id}")
-async def update_person(person_id: int, person_update: PersonUpdate, db: Session = Depends(get_db)):
+async def update_person(person_id: int, person_update: PersonUpdate):
     """更新人物信息"""
-    person = db.query(Person).filter(Person.id == person_id).first()
-    if not person:
+    existing = db_get_person(person_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="人物不存在")
 
+    update_data = {}
     if person_update.name is not None:
-        person.name = person_update.name
+        update_data["name"] = person_update.name
     if person_update.relationship_type is not None:
-        person.relationship_type = person_update.relationship_type
+        update_data["relationship_type"] = person_update.relationship_type
     if person_update.notes is not None:
-        person.notes = person_update.notes
+        update_data["notes"] = person_update.notes
     if person_update.personality_tags is not None:
-        person.personality_tags = person_update.personality_tags
+        update_data["personality_tags"] = person_update.personality_tags
 
-    db.commit()
-    db.refresh(person)
+    updated = db_update_person(person_id, update_data)
 
     return {
-        "id": person.id,
-        "name": person.name,
-        "relationship_type": person.relationship_type,
-        "notes": person.notes,
-        "personality_tags": person.personality_tags
+        "id": updated["id"],
+        "name": updated["name"],
+        "relationship_type": updated.get("relationship_type"),
+        "notes": updated.get("notes"),
+        "personality_tags": updated.get("personality_tags") or []
     }
 
 
 @router.delete("/persons/{person_id}")
-async def delete_person(person_id: int, db: Session = Depends(get_db)):
+async def delete_person(person_id: int):
     """删除人物"""
-    person = db.query(Person).filter(Person.id == person_id).first()
-    if not person:
+    existing = db_get_person(person_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="人物不存在")
 
-    db.delete(person)
-    db.commit()
+    db_delete_person(person_id)
 
     return {"message": "人物已删除"}
 
@@ -144,69 +153,59 @@ async def list_memories(
     person_id: Optional[int] = None,
     category: Optional[str] = None,
     confirmed: Optional[int] = None,
-    db: Session = Depends(get_db)
 ):
     """获取记忆列表"""
-    query = db.query(Memory)
+    memories = db_get_memories(person_id=person_id, confirmed=confirmed)
 
-    if person_id is not None:
-        query = query.filter(Memory.person_id == person_id)
     if category:
-        query = query.filter(Memory.category == category)
-    if confirmed is not None:
-        query = query.filter(Memory.confirmed == confirmed)
-
-    memories = query.all()
+        memories = [m for m in memories if m.get("category") == category]
 
     return [
         {
-            "id": m.id,
-            "person_id": m.person_id,
-            "content": m.content,
-            "category": m.category,
-            "confirmed": m.confirmed
+            "id": m["id"],
+            "person_id": m.get("person_id"),
+            "content": m["content"],
+            "category": m.get("category"),
+            "confirmed": m.get("confirmed")
         }
         for m in memories
     ]
 
 
 @router.post("/memories")
-async def create_memory(memory: MemoryCreate, db: Session = Depends(get_db)):
+async def create_memory(memory: MemoryCreate):
     """创建记忆"""
-    new_memory = Memory(
-        person_id=memory.person_id,
+    new_memory = db_create_memory(
         content=memory.content,
+        person_id=memory.person_id,
         category=memory.category,
         confirmed=memory.confirmed or 0
     )
-    db.add(new_memory)
-    db.commit()
-    db.refresh(new_memory)
 
     return {
-        "id": new_memory.id,
-        "person_id": new_memory.person_id,
-        "content": new_memory.content,
-        "category": new_memory.category,
-        "confirmed": new_memory.confirmed
+        "id": new_memory["id"],
+        "person_id": new_memory.get("person_id"),
+        "content": new_memory["content"],
+        "category": new_memory.get("category"),
+        "confirmed": new_memory.get("confirmed")
     }
 
 
 @router.put("/memories/{memory_id}/confirm")
-async def confirm_memory(memory_id: int, db: Session = Depends(get_db)):
+async def confirm_memory(memory_id: int):
     """确认记忆"""
-    memory = db.query(Memory).filter(Memory.id == memory_id).first()
+    memories = db_get_memories()
+    memory = next((m for m in memories if m["id"] == memory_id), None)
+
     if not memory:
         raise HTTPException(status_code=404, detail="记忆不存在")
 
-    memory.confirmed = 1
-    db.commit()
-    db.refresh(memory)
+    updated = db_update_memory_confirmed(memory_id, 1)
 
     return {
-        "id": memory.id,
-        "person_id": memory.person_id,
-        "content": memory.content,
-        "category": memory.category,
-        "confirmed": memory.confirmed
+        "id": updated["id"],
+        "person_id": updated.get("person_id"),
+        "content": updated["content"],
+        "category": updated.get("category"),
+        "confirmed": updated.get("confirmed")
     }
