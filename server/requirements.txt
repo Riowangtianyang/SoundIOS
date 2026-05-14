@@ -1,0 +1,6 @@
+fastapi==0.109.0
+uvicorn==0.27.0
+sqlalchemy==2.0.25
+python-multipart==0.0.6
+tencentcloud-sdk-python==3.0.1184
+aiohttp==3.9.3
