@@ -1,9 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict
-from models import get_db
-from models.database import Person, Memory
+from services.supabase_db import get_person, get_persons, get_memories
 from services.llm import get_llm_service
 from services.analyzer import analyze_conversation
 
@@ -36,7 +34,7 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/process")
-async def process_transcript(request: ProcessTranscriptRequest, db: Session = Depends(get_db)):
+async def process_transcript(request: ProcessTranscriptRequest):
     """处理录音转写的文本，提取关键信息"""
     if not request.transcript_text:
         raise HTTPException(status_code=400, detail="转写文本不能为空")
@@ -47,51 +45,49 @@ async def process_transcript(request: ProcessTranscriptRequest, db: Session = De
 
 
 @router.get("/chat/context")
-async def get_chat_context(
-    person_id: Optional[int] = None,
-    db: Session = Depends(get_db)
-):
+async def get_chat_context(person_id: Optional[int] = None):
     """获取聊天上下文信息"""
     context = {}
 
     if person_id:
-        person = db.query(Person).filter(Person.id == person_id).first()
+        person = get_person(person_id)
         if person:
             context["person"] = {
-                "id": person.id,
-                "name": person.name,
-                "relationship": person.relationship_type,
-                "notes": person.notes,
-                "personality_tags": person.personality_tags
+                "id": person.get("id"),
+                "name": person.get("name"),
+                "relationship": person.get("relationship_type"),
+                "notes": person.get("notes"),
+                "personality_tags": person.get("personality_tags") or []
             }
+            memories = get_memories(person_id=person_id, confirmed=True)
             context["memories"] = [
                 {
-                    "id": m.id,
-                    "content": m.content,
-                    "category": m.category,
-                    "confirmed": m.confirmed
+                    "id": m.get("id"),
+                    "content": m.get("content"),
+                    "category": m.get("category"),
+                    "confirmed": m.get("confirmed")
                 }
-                for m in person.memories if m.confirmed == 1
+                for m in memories
             ]
     else:
-        memories = db.query(Memory).filter(Memory.confirmed == 1).all()
+        memories = get_memories(confirmed=True)
         context["memories"] = [
             {
-                "id": m.id,
-                "content": m.content,
-                "category": m.category,
-                "confirmed": m.confirmed
+                "id": m.get("id"),
+                "content": m.get("content"),
+                "category": m.get("category"),
+                "confirmed": m.get("confirmed")
             }
             for m in memories
         ]
 
-        persons = db.query(Person).all()
+        persons = get_persons()
         context["persons"] = [
             {
-                "id": p.id,
-                "name": p.name,
-                "relationship": p.relationship_type,
-                "personality_tags": p.personality_tags
+                "id": p.get("id"),
+                "name": p.get("name"),
+                "relationship": p.get("relationship_type"),
+                "personality_tags": p.get("personality_tags") or []
             }
             for p in persons
         ]

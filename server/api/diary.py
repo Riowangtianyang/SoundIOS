@@ -1,16 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
-from models import get_db
-from models.database import DiaryEntry
+from services.supabase_db import (
+    create_diary,
+    get_diaries,
+    get_diary_by_date,
+    update_diary as supabase_update_diary
+)
 
 router = APIRouter()
 
 
 class DiaryEntryCreate(BaseModel):
-    date: Optional[datetime] = None
+    date: Optional[str] = None
     summary: str
     details: Optional[str] = None
     mood_score: Optional[int] = None
@@ -23,17 +25,17 @@ class DiaryEntryUpdate(BaseModel):
 
 
 @router.get("/diaries")
-async def list_diaries(db: Session = Depends(get_db)):
+async def list_diaries(limit: int = 30):
     """获取日记列表"""
-    diaries = db.query(DiaryEntry).order_by(DiaryEntry.date.desc()).all()
+    diaries = get_diaries(limit=limit)
     return {
         "diaries": [
             {
-                "id": d.id,
-                "date": d.date,
-                "summary": d.summary,
-                "details": d.details,
-                "mood_score": d.mood_score
+                "id": d.get("id"),
+                "date": d.get("date"),
+                "summary": d.get("summary"),
+                "details": d.get("details"),
+                "mood_score": d.get("mood_score")
             }
             for d in diaries
         ]
@@ -41,94 +43,100 @@ async def list_diaries(db: Session = Depends(get_db)):
 
 
 @router.post("/diaries")
-async def create_diary(entry: DiaryEntryCreate, db: Session = Depends(get_db)):
+async def create_diary_entry(entry: DiaryEntryCreate):
     """创建日记"""
-    diary = DiaryEntry(
-        date=entry.date or datetime.utcnow(),
+    diary = create_diary(
+        date=entry.date,
         summary=entry.summary,
         details=entry.details,
         mood_score=entry.mood_score
     )
-    db.add(diary)
-    db.commit()
-    db.refresh(diary)
 
     return {
-        "id": diary.id,
-        "date": diary.date,
-        "summary": diary.summary,
-        "details": diary.details,
-        "mood_score": diary.mood_score
+        "id": diary.get("id"),
+        "date": diary.get("date"),
+        "summary": diary.get("summary"),
+        "details": diary.get("details"),
+        "mood_score": diary.get("mood_score")
     }
 
 
 @router.get("/diaries/{diary_id}")
-async def get_diary(diary_id: int, db: Session = Depends(get_db)):
+async def get_diary(diary_id: int):
     """获取日记详情"""
-    diary = db.query(DiaryEntry).filter(DiaryEntry.id == diary_id).first()
+    diaries = get_diaries(limit=100)
+    diary = next((d for d in diaries if d.get("id") == diary_id), None)
     if not diary:
         raise HTTPException(status_code=404, detail="日记不存在")
 
     return {
-        "id": diary.id,
-        "date": diary.date,
-        "summary": diary.summary,
-        "details": diary.details,
-        "mood_score": diary.mood_score
+        "id": diary.get("id"),
+        "date": diary.get("date"),
+        "summary": diary.get("summary"),
+        "details": diary.get("details"),
+        "mood_score": diary.get("mood_score")
     }
 
 
 @router.put("/diaries/{diary_id}")
-async def update_diary(diary_id: int, entry: DiaryEntryUpdate, db: Session = Depends(get_db)):
+async def update_diary_entry(diary_id: int, entry: DiaryEntryUpdate):
     """更新日记"""
-    diary = db.query(DiaryEntry).filter(DiaryEntry.id == diary_id).first()
+    # 先检查日记是否存在
+    diaries = get_diaries(limit=100)
+    existing = next((d for d in diaries if d.get("id") == diary_id), None)
+    if not existing:
+        raise HTTPException(status_code=404, detail="日记不存在")
+
+    # 构建更新数据
+    update_data = {}
+    if entry.summary is not None:
+        update_data["summary"] = entry.summary
+    if entry.details is not None:
+        update_data["details"] = entry.details
+    if entry.mood_score is not None:
+        update_data["mood_score"] = entry.mood_score
+
+    diary = supabase_update_diary(diary_id, update_data)
     if not diary:
         raise HTTPException(status_code=404, detail="日记不存在")
 
-    if entry.summary is not None:
-        diary.summary = entry.summary
-    if entry.details is not None:
-        diary.details = entry.details
-    if entry.mood_score is not None:
-        diary.mood_score = entry.mood_score
-
-    db.commit()
-    db.refresh(diary)
-
     return {
-        "id": diary.id,
-        "date": diary.date,
-        "summary": diary.summary,
-        "details": diary.details,
-        "mood_score": diary.mood_score
+        "id": diary.get("id"),
+        "date": diary.get("date"),
+        "summary": diary.get("summary"),
+        "details": diary.get("details"),
+        "mood_score": diary.get("mood_score")
     }
 
 
 @router.delete("/diaries/{diary_id}")
-async def delete_diary(diary_id: int, db: Session = Depends(get_db)):
+async def delete_diary(diary_id: int):
     """删除日记"""
-    diary = db.query(DiaryEntry).filter(DiaryEntry.id == diary_id).first()
-    if not diary:
+    from services.supabase_db import supabase as supabase_client
+
+    # 检查日记是否存在
+    diaries = get_diaries(limit=100)
+    existing = next((d for d in diaries if d.get("id") == diary_id), None)
+    if not existing:
         raise HTTPException(status_code=404, detail="日记不存在")
 
-    db.delete(diary)
-    db.commit()
+    # 删除日记
+    supabase_client.table("diaries").delete().eq("id", diary_id).execute()
 
     return {"message": "日记已删除"}
 
 
 @router.get("/diaries/date/{date_str}")
-async def get_diary_by_date(date_str: str, db: Session = Depends(get_db)):
+async def get_diary_by_date_str(date_str: str):
     """根据日期字符串获取日记"""
+    # 验证日期格式
     try:
-        date = datetime.strptime(date_str, "%Y-%m-%d")
+        from datetime import datetime
+        datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
 
-    diary = db.query(DiaryEntry).filter(
-        DiaryEntry.date >= date,
-        DiaryEntry.date < date.replace(hour=23, minute=59, second=59)
-    ).first()
+    diary = get_diary_by_date(date_str)
 
     if not diary:
         return {
@@ -139,9 +147,9 @@ async def get_diary_by_date(date_str: str, db: Session = Depends(get_db)):
         }
 
     return {
-        "id": diary.id,
-        "date": diary.date,
-        "summary": diary.summary,
-        "details": diary.details,
-        "mood_score": diary.mood_score
+        "id": diary.get("id"),
+        "date": diary.get("date"),
+        "summary": diary.get("summary"),
+        "details": diary.get("details"),
+        "mood_score": diary.get("mood_score")
     }

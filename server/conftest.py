@@ -1,22 +1,24 @@
 """
-pytest 配置
+pytest 配置（使用 Supabase）
 """
 import os
 
-# 在任何导入前设置测试环境
+# 设置测试环境
 os.environ["TESTING"] = "1"
 
 import pytest
+from unittest.mock import MagicMock, patch
+
+# Mock Supabase 客户端
+mock_client = MagicMock()
+mock_client.table = MagicMock(return_value=MagicMock(
+    select=MagicMock(return_value=MagicMock(
+        execute=MagicMock(return_value=MagicMock(data=[]))
+    ))
+))
 
 @pytest.fixture(scope="session", autouse=True)
-def setup_test_db():
-    """初始化测试数据库"""
-    from models import Base, get_engine
-    from models.database import Recording, Transcript, DiaryEntry, Todo, Person, Memory
-    
-    engine = get_engine()
-    # 创建所有表
-    Base.metadata.create_all(bind=engine)
-    yield
-    # 清理
-    Base.metadata.drop_all(bind=engine)
+def setup_mock_supabase():
+    """Mock Supabase 客户端"""
+    with patch("services.supabase_db.create_client", return_value=mock_client):
+        yield
