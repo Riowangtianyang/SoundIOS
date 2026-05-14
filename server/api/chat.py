@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 from services.supabase_db import get_person, get_persons, get_memories
 from services.llm import get_llm_service
 from services.analyzer import analyze_conversation
+from services.tts import text_to_speech
 
 router = APIRouter()
 
@@ -16,6 +18,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
     context: Optional[Dict] = None
+    return_audio: bool = False  # 是否返回语音
 
 
 class ProcessTranscriptRequest(BaseModel):
@@ -29,6 +32,15 @@ async def chat(request: ChatRequest):
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
     llm_service = get_llm_service()
     response = await llm_service.chat(messages)
+
+    # 如果请求语音回复
+    if request.return_audio:
+        audio_stream = text_to_speech(response)
+        return StreamingResponse(
+            audio_stream,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline"}
+        )
 
     return {"response": response}
 
@@ -93,3 +105,10 @@ async def get_chat_context(person_id: Optional[int] = None):
         ]
 
     return context
+
+
+@router.get("/chat/voices")
+async def list_voices():
+    """获取可用语音列表"""
+    from services.tts import AVAILABLE_VOICES
+    return {"voices": AVAILABLE_VOICES}
