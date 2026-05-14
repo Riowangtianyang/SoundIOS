@@ -110,3 +110,60 @@ def update_memory_confirmed(id: int, confirmed: int):
     supabase = get_supabase()
     result = supabase.table("memories").update({"confirmed": confirmed}).eq("id", id).execute()
     return result.data[0] if result.data else None
+
+
+# ============ Todo Operations ============
+
+def create_todo(
+    title: str,
+    description: str = None,
+    due_date: str = None,
+    priority: int = 3,
+    status: str = "pending",
+    source_recording_id: int = None
+):
+    """创建待办事项"""
+    supabase = get_supabase()
+    data = {
+        "title": title,
+        "description": description,
+        "due_date": due_date,
+        "priority": priority,
+        "status": status
+    }
+    if source_recording_id:
+        data["source_recording_id"] = source_recording_id
+    result = supabase.table("todos").insert(data).execute()
+    return result.data[0] if result.data else None
+
+
+def get_todos(status: str = None, limit: int = 100):
+    """获取待办事项列表"""
+    supabase = get_supabase()
+    query = supabase.table("todos").select("*")
+    if status:
+        query = query.eq("status", status)
+    # 按 priority 升序, due_date 升序排序
+    result = query.order("priority", desc=False).order("due_date", desc=False).limit(limit).execute()
+    return result.data or []
+
+
+def get_todo(id: int):
+    """获取单个待办事项"""
+    supabase = get_supabase()
+    result = supabase.table("todos").select("*").eq("id", id).execute()
+    return result.data[0] if result.data else None
+
+
+def update_todo(id: int, data: dict):
+    """更新待办事项"""
+    supabase = get_supabase()
+    result = supabase.table("todos").update(data).eq("id", id).execute()
+    return result.data[0] if result.data else None
+
+
+def delete_todo(id: int):
+    """删除待办事项"""
+    supabase = get_supabase()
+    supabase.table("todos").delete().eq("id", id).execute()
+    return True

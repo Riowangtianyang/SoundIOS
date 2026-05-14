@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
-from models import get_db
-from models.database import Todo
+from services.supabase_db import (
+    create_todo as supabase_create_todo,
+    get_todos,
+    get_todo as supabase_get_todo,
+    update_todo as supabase_update_todo,
+    delete_todo as supabase_delete_todo
+)
 
 router = APIRouter()
 
@@ -12,7 +15,7 @@ router = APIRouter()
 class TodoCreate(BaseModel):
     title: str
     description: Optional[str] = None
-    due_date: Optional[datetime] = None
+    due_date: Optional[str] = None
     priority: Optional[int] = 3
     status: Optional[str] = "pending"
 
@@ -20,7 +23,7 @@ class TodoCreate(BaseModel):
 class TodoUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
-    due_date: Optional[datetime] = None
+    due_date: Optional[str] = None
     priority: Optional[int] = None
     status: Optional[str] = None
 
@@ -28,28 +31,24 @@ class TodoUpdate(BaseModel):
 @router.get("/todos")
 async def list_todos(
     status: Optional[str] = None,
-    priority: Optional[int] = None,
-    db: Session = Depends(get_db)
+    priority: Optional[int] = None
 ):
     """获取待办列表"""
-    query = db.query(Todo)
+    todos = get_todos(status=status)
 
-    if status:
-        query = query.filter(Todo.status == status)
+    # 内存中过滤 priority（保持与原 API 一致的行为）
     if priority is not None:
-        query = query.filter(Todo.priority == priority)
-
-    todos = query.order_by(Todo.priority.asc(), Todo.due_date.asc()).all()
+        todos = [t for t in todos if t.get("priority") == priority]
 
     return {
         "todos": [
             {
-                "id": t.id,
-                "title": t.title,
-                "description": t.description,
-                "due_date": t.due_date,
-                "priority": t.priority,
-                "status": t.status
+                "id": t.get("id"),
+                "title": t.get("title"),
+                "description": t.get("description"),
+                "due_date": t.get("due_date"),
+                "priority": t.get("priority"),
+                "status": t.get("status")
             }
             for t in todos
         ]
@@ -57,85 +56,84 @@ async def list_todos(
 
 
 @router.post("/todos")
-async def create_todo(todo: TodoCreate, db: Session = Depends(get_db)):
+async def create_todo(todo: TodoCreate):
     """创建待办"""
-    new_todo = Todo(
+    new_todo = supabase_create_todo(
         title=todo.title,
         description=todo.description,
         due_date=todo.due_date,
         priority=todo.priority or 3,
         status=todo.status or "pending"
     )
-    db.add(new_todo)
-    db.commit()
-    db.refresh(new_todo)
 
     return {
-        "id": new_todo.id,
-        "title": new_todo.title,
-        "description": new_todo.description,
-        "due_date": new_todo.due_date,
-        "priority": new_todo.priority,
-        "status": new_todo.status
+        "id": new_todo.get("id"),
+        "title": new_todo.get("title"),
+        "description": new_todo.get("description"),
+        "due_date": new_todo.get("due_date"),
+        "priority": new_todo.get("priority"),
+        "status": new_todo.get("status")
     }
 
 
 @router.get("/todos/{todo_id}")
-async def get_todo(todo_id: int, db: Session = Depends(get_db)):
+async def get_todo(todo_id: int):
     """获取待办详情"""
-    todo = db.query(Todo).filter(Todo.id == todo_id).first()
+    todo = supabase_get_todo(todo_id)
     if not todo:
         raise HTTPException(status_code=404, detail="待办不存在")
 
     return {
-        "id": todo.id,
-        "title": todo.title,
-        "description": todo.description,
-        "due_date": todo.due_date,
-        "priority": todo.priority,
-        "status": todo.status
+        "id": todo.get("id"),
+        "title": todo.get("title"),
+        "description": todo.get("description"),
+        "due_date": todo.get("due_date"),
+        "priority": todo.get("priority"),
+        "status": todo.get("status")
     }
 
 
 @router.put("/todos/{todo_id}")
-async def update_todo(todo_id: int, todo_update: TodoUpdate, db: Session = Depends(get_db)):
+async def update_todo(todo_id: int, todo_update: TodoUpdate):
     """更新待办"""
-    todo = db.query(Todo).filter(Todo.id == todo_id).first()
-    if not todo:
+    # 检查待办是否存在
+    existing = supabase_get_todo(todo_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="待办不存在")
 
+    # 构建更新数据
+    update_data = {}
     if todo_update.title is not None:
-        todo.title = todo_update.title
+        update_data["title"] = todo_update.title
     if todo_update.description is not None:
-        todo.description = todo_update.description
+        update_data["description"] = todo_update.description
     if todo_update.due_date is not None:
-        todo.due_date = todo_update.due_date
+        update_data["due_date"] = todo_update.due_date
     if todo_update.priority is not None:
-        todo.priority = todo_update.priority
+        update_data["priority"] = todo_update.priority
     if todo_update.status is not None:
-        todo.status = todo_update.status
+        update_data["status"] = todo_update.status
 
-    db.commit()
-    db.refresh(todo)
+    todo = supabase_update_todo(todo_id, update_data)
 
     return {
-        "id": todo.id,
-        "title": todo.title,
-        "description": todo.description,
-        "due_date": todo.due_date,
-        "priority": todo.priority,
-        "status": todo.status
+        "id": todo.get("id"),
+        "title": todo.get("title"),
+        "description": todo.get("description"),
+        "due_date": todo.get("due_date"),
+        "priority": todo.get("priority"),
+        "status": todo.get("status")
     }
 
 
 @router.delete("/todos/{todo_id}")
-async def delete_todo(todo_id: int, db: Session = Depends(get_db)):
+async def delete_todo(todo_id: int):
     """删除待办"""
-    todo = db.query(Todo).filter(Todo.id == todo_id).first()
-    if not todo:
+    # 检查待办是否存在
+    existing = supabase_get_todo(todo_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="待办不存在")
 
-    db.delete(todo)
-    db.commit()
+    supabase_delete_todo(todo_id)
 
     return {"message": "待办已删除"}
