@@ -1,60 +1,50 @@
 """
-腾讯云 ASR 语音转文字服务
-基于腾讯云语音识别 API 实现音频转写
+MiniMax 语音转文字服务
+基于 MiniMax OpenAI 兼容 API 实现音频转写
 """
 
-import base64
-import hashlib
-import time
-import hmac
-import json
 import os
 from typing import Optional, Dict, List
-from pathlib import Path
 
-# 腾讯云 SDK
+# MiniMax OpenAI 兼容 SDK
 try:
-    from tencentcloud.common import credential
-    from tencentcloud.asr.v20190704 import asr_client
-    from tencentcloud.common.profile import http_profile
-    from tencentcloud.common.exception.tencent_cloud_sdk_exception import TencentCloudSDKException
-    TENANCENT_SDK_AVAILABLE = True
+    import openai
+    OPENAI_SDK_AVAILABLE = True
 except ImportError:
-    TENANCENT_SDK_AVAILABLE = False
-    print("Warning: tencentcloud-sdk not installed. Install with: pip install tencentcloud-sdk-python")
+    OPENAI_SDK_AVAILABLE = False
+    print("Warning: openai SDK not installed. Install with: pip install openai")
 
 
-class TencentSTTService:
-    """腾讯云语音识别服务"""
+class MiniMaxSTTService:
+    """MiniMax 语音识别服务"""
 
     def __init__(
         self,
-        secret_id: Optional[str] = None,
-        secret_key: Optional[str] = None,
-        app_id: Optional[str] = None
+        api_key: Optional[str] = None,
+        group_id: Optional[str] = None
     ):
         """
-        初始化腾讯云 ASR 服务
+        初始化 MiniMax ASR 服务
 
         Args:
-            secret_id: 腾讯云 SecretId（优先从环境变量获取）
-            secret_key: 腾讯云 SecretKey
-            app_id: 腾讯云 AppId
+            api_key: MiniMax API Key（优先从环境变量获取）
+            group_id: MiniMax Group ID
         """
-        self.secret_id = secret_id or os.getenv("TENCENT_SECRET_ID")
-        self.secret_key = secret_key or os.getenv("TENCENT_SECRET_KEY")
-        self.app_id = app_id or os.getenv("TENCENT_APP_ID")
+        self.api_key = api_key or os.getenv("MINIMAX_API_KEY")
+        self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID")
 
-        if not self.secret_id or not self.secret_key:
-            print("Warning: Tencent credentials not found in environment variables")
+        if not self.api_key:
+            print("Warning: MINIMAX_API_KEY not found in environment variables")
 
-        # API 配置
-        self.model_type = 16  # 16k 采样率模型
-        self.engine_type = "16k_zh"  # 中文16k引擎
+        # 创建 OpenAI 客户端（MiniMax 兼容）
+        self.client = openai.OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.minimax.chat/v1"
+        )
 
     async def transcribe(self, audio_path: str) -> Dict:
         """
-        使用腾讯云 ASR 转写音频文件
+        使用 MiniMax ASR 转写音频文件
 
         Args:
             audio_path: 音频文件路径（支持 wav, mp3, m4a, opus 格式）
@@ -69,12 +59,20 @@ class TencentSTTService:
                 "success": True
             }
         """
-        if not TENANCENT_SDK_AVAILABLE:
+        if not OPENAI_SDK_AVAILABLE:
             return {
                 "text": "",
                 "segments": [],
                 "success": False,
-                "error": "Tencent SDK not installed"
+                "error": "OpenAI SDK not installed"
+            }
+
+        if not self.api_key:
+            return {
+                "text": "",
+                "segments": [],
+                "success": False,
+                "error": "MINIMAX_API_KEY not configured"
             }
 
         if not os.path.exists(audio_path):
@@ -86,70 +84,30 @@ class TencentSTTService:
             }
 
         try:
-            # 读取音频文件并转为 base64
-            with open(audio_path, 'rb') as f:
-                audio_data = f.read()
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            # 打开音频文件
+            with open(audio_path, "rb") as audio_file:
+                # 调用 MiniMax 语音转文字 API
+                response = self.client.audio.transcriptions.create(
+                    model="speech-01",
+                    file=audio_file
+                )
 
-            # 获取文件扩展名判断格式
-            ext = Path(audio_path).suffix.lower()
-            format_map = {
-                '.wav': 'wav',
-                '.mp3': 'mp3',
-                '.m4a': 'm4a',
-                '.opus': 'opus',
-                '.pcm': 'pcm'
-            }
-            audio_format = format_map.get(ext, 'wav')
-
-            # 创建凭证
-            cred_obj = credential.Credential(self.secret_id, self.secret_key)
-
-            # 创建 HTTP profile
-            http_profile_obj = http_profile.HttpProfile()
-            http_profile_obj.endpoint = "asr.tencentcloudapi.com"
-
-            # 创建客户端
-            client_profile = http_profile.ClientProfile()
-            client_profile.httpProfile = http_profile_obj
-            client = asr_client.AsrClient(cred_obj, "ap-guangzhou", client_profile)
-
-            # 构造请求参数
-            req_params = {
-                "EngineType": self.engine_type,
-                "VoiceFormat": audio_format,
-                "Data": audio_base64,
-                "DataLen": len(audio_data)
-            }
-
-            # 调用 API
-            resp = client.SentenceRecognition(req_params)
-
-            # 解析结果
-            if resp.Success:
-                result_text = resp.Result
+                # 解析结果
+                result_text = response.text
                 segments = self._parse_to_segments(result_text)
 
                 return {
                     "text": result_text,
                     "segments": segments,
-                    "success": True,
-                    "confidence": getattr(resp, 'Confidence', 1.0)
-                }
-            else:
-                return {
-                    "text": "",
-                    "segments": [],
-                    "success": False,
-                    "error": resp.ErrorMsg if hasattr(resp, 'ErrorMsg') else "Unknown error"
+                    "success": True
                 }
 
-        except TencentCloudSDKException as e:
+        except openai.APIError as e:
             return {
                 "text": "",
                 "segments": [],
                 "success": False,
-                "error": f"Tencent SDK error: {str(e)}"
+                "error": f"MiniMax API error: {str(e)}"
             }
         except Exception as e:
             return {
@@ -170,48 +128,55 @@ class TencentSTTService:
         Returns:
             转写结果 dict
         """
-        if not TENANCENT_SDK_AVAILABLE:
+        if not OPENAI_SDK_AVAILABLE:
             return {
                 "text": "",
                 "segments": [],
                 "success": False,
-                "error": "Tencent SDK not installed"
+                "error": "OpenAI SDK not installed"
+            }
+
+        if not self.api_key:
+            return {
+                "text": "",
+                "segments": [],
+                "success": False,
+                "error": "MINIMAX_API_KEY not configured"
             }
 
         try:
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            import tempfile
 
-            cred_obj = credential.Credential(self.secret_id, self.secret_key)
-            http_profile_obj = http_profile.HttpProfile()
-            http_profile_obj.endpoint = "asr.tencentcloudapi.com"
+            # 将 bytes 写入临时文件
+            suffix = f".{audio_format}"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(audio_data)
+                tmp_path = tmp.name
 
-            client_profile = http_profile.ClientProfile()
-            client_profile.httpProfile = http_profile_obj
-            client = asr_client.AsrClient(cred_obj, "ap-guangzhou", client_profile)
+            try:
+                # 调用 MiniMax API
+                with open(tmp_path, "rb") as audio_file:
+                    response = self.client.audio.transcriptions.create(
+                        model="speech-01",
+                        file=audio_file
+                    )
 
-            req_params = {
-                "EngineType": self.engine_type,
-                "VoiceFormat": audio_format,
-                "Data": audio_base64,
-                "DataLen": len(audio_data)
+                    return {
+                        "text": response.text,
+                        "segments": self._parse_to_segments(response.text),
+                        "success": True
+                    }
+            finally:
+                # 清理临时文件
+                os.unlink(tmp_path)
+
+        except openai.APIError as e:
+            return {
+                "text": "",
+                "segments": [],
+                "success": False,
+                "error": f"MiniMax API error: {str(e)}"
             }
-
-            resp = client.SentenceRecognition(req_params)
-
-            if resp.Success:
-                return {
-                    "text": resp.Result,
-                    "segments": self._parse_to_segments(resp.Result),
-                    "success": True
-                }
-            else:
-                return {
-                    "text": "",
-                    "segments": [],
-                    "success": False,
-                    "error": resp.ErrorMsg if hasattr(resp, 'ErrorMsg') else "Unknown error"
-                }
-
         except Exception as e:
             return {
                 "text": "",
@@ -224,8 +189,7 @@ class TencentSTTService:
         """
         将转写文本解析为分段格式
 
-        由于腾讯云 API 不返回时间戳，这里根据句子长度做简单分割
-        实际项目中可以使用腾讯云的 v2 接口获取时间戳
+        由于 MiniMax API 不返回时间戳，这里根据句子长度做简单分割
         """
         if not text:
             return []
@@ -292,35 +256,33 @@ class TencentSTTService:
 
 
 # 全局单例
-_stt_service: Optional[TencentSTTService] = None
+_stt_service: Optional[MiniMaxSTTService] = None
 
 
 def get_stt_service(
-    secret_id: Optional[str] = None,
-    secret_key: Optional[str] = None,
-    app_id: Optional[str] = None
-) -> TencentSTTService:
+    api_key: Optional[str] = None,
+    group_id: Optional[str] = None
+) -> MiniMaxSTTService:
     """
     获取 STT 服务单例
 
     Args:
-        secret_id: 腾讯云 SecretId
-        secret_key: 腾讯云 SecretKey
-        app_id: 腾讯云 AppId
+        api_key: MiniMax API Key
+        group_id: MiniMax Group ID
 
     Returns:
-        TencentSTTService 实例
+        MiniMaxSTTService 实例
     """
     global _stt_service
     if _stt_service is None:
-        _stt_service = TencentSTTService(secret_id, secret_key, app_id)
+        _stt_service = MiniMaxSTTService(api_key, group_id)
     return _stt_service
 
 
 # 便捷函数
 async def transcribe(audio_path: str) -> Dict:
     """
-    使用腾讯云 ASR 转写音频
+    使用 MiniMax ASR 转写音频
 
     Returns: {"text": "转写文本", "segments": [{"start": 0, "end": 5, "text": "你好"}]}
     """
