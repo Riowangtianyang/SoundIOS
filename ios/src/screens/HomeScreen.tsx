@@ -7,8 +7,10 @@ import {
   Animated,
   Dimensions,
   ScrollView,
+  Alert,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {useRecorder} from '../hooks/useRecorder';
 import {colors, spacing, borderRadius, shadows} from '../theme';
 
 const {width, height} = Dimensions.get('window');
@@ -135,16 +137,32 @@ const RecentRecording: React.FC<{
 );
 
 const HomeScreen: React.FC = () => {
-  const [recording, setRecording] = useState(false);
+  const {isRecording, isUploading, startRecording, stopAndUpload} = useRecorder();
   const [stats, setStats] = useState({
     segments: 0,
     duration: '00:00',
     interruptions: 0,
   });
 
-  const handleRecordToggle = () => {
-    setRecording(!recording);
-    // TODO: 调用 API 启动/停止录音
+  const handleRecordToggle = async () => {
+    if (isRecording) {
+      try {
+        const result = await stopAndUpload();
+        if (result) {
+          setStats(prev => ({...prev, segments: prev.segments + 1}));
+        }
+      } catch (error) {
+        Alert.alert('上传失败', '录音上传失败，请重试');
+      }
+    } else {
+      try {
+        await startRecording('manual');
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Microphone permission denied') {
+          Alert.alert('权限不足', '请在设置中开启麦克风权限');
+        }
+      }
+    }
   };
 
   return (
@@ -157,12 +175,12 @@ const HomeScreen: React.FC = () => {
 
       {/* 主录音区域 */}
       <View style={styles.recordSection}>
-        <RecordButton recording={recording} onPress={handleRecordToggle} />
+        <RecordButton recording={isRecording} onPress={handleRecordToggle} />
         <Text style={styles.recordStatus}>
-          {recording ? '正在聆听...' : '点击开始录音'}
+          {isRecording ? '正在聆听...' : '点击开始录音'}
         </Text>
         <Text style={styles.recordHint}>
-          {recording
+          {isRecording
             ? '我会自动记录对话内容'
             : '开启后我将持续监听周围声音'}
         </Text>
